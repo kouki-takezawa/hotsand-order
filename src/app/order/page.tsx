@@ -5,8 +5,6 @@ import { NumberOrderClient } from "@/components/order/NumberOrderClient";
 export const dynamic = "force-dynamic";
 
 export default async function NumberOrderPage() {
-  // 卓方式の店舗でも、共通QR（卓が決まっていない客用）からの注文を受け付ける
-  // ため、運用形態（operationMode）に関わらずこのページ自体は常に開放する。
   const [settings, categories] = await Promise.all([getSettings(), getMenu()]);
 
   return (

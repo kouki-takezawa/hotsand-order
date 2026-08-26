@@ -5,8 +5,7 @@ import { getTodayRangeJST, isLunchHour, getJSTDateKey } from "./date";
 import type { Order, OrderItem } from "@prisma/client";
 
 export const ACTIVE_STATUSES = ["pending", "preparing", "served"] as const;
-export type OrderStatus = "pending" | "preparing" | "served" | "paid" | "cancelled";
-export type OperationMode = "table" | "number";
+export type OrderStatus = "pending" | "preparing" | "served" | "cancelled";
 
 type OrderWithItems = Order & { items: OrderItem[] };
 
@@ -24,19 +23,13 @@ export function orderTotal(order: OrderWithItems): number {
 
 // ---- 設定 -------------------------------------------------------------
 
-function toOperationMode(value: string): OperationMode {
-  return value === "number" ? "number" : "table";
-}
-
 export async function getSettings() {
   const existing = await prisma.settings.findUnique({ where: { id: "singleton" } });
-  const settings = existing ?? (await prisma.settings.create({ data: { id: "singleton" } }));
-  return { ...settings, operationMode: toOperationMode(settings.operationMode) };
+  return existing ?? (await prisma.settings.create({ data: { id: "singleton" } }));
 }
 
 export async function updateSettings(data: {
   restaurantName?: string;
-  operationMode?: OperationMode;
   wifiSsid?: string | null;
   wifiPassword?: string | null;
 }) {
@@ -161,55 +154,7 @@ export async function deleteMenuItem(id: string) {
   return prisma.menuItem.delete({ where: { id } });
 }
 
-// ---- テーブル（卓方式） ------------------------------------------------------
-
-export async function getTableByNumber(number: number) {
-  return prisma.restaurantTable.findUnique({ where: { number } });
-}
-
-export async function getTables() {
-  return prisma.restaurantTable.findMany({ orderBy: { number: "asc" } });
-}
-
-export async function createTable(name?: string) {
-  const max = await prisma.restaurantTable.aggregate({ _max: { number: true } });
-  const number = (max._max.number ?? 0) + 1;
-  return prisma.restaurantTable.create({
-    data: { number, name: name?.trim() || `卓${number}`, qrToken: crypto.randomUUID() },
-  });
-}
-
-export async function renameTable(id: string, name: string) {
-  return prisma.restaurantTable.update({ where: { id }, data: { name } });
-}
-
-export async function deleteTable(id: string) {
-  const count = await prisma.order.count({ where: { tableId: id } });
-  if (count > 0) throw new Error("注文履歴がある卓は削除できません");
-  await prisma.tableSession.deleteMany({ where: { tableId: id } });
-  return prisma.restaurantTable.delete({ where: { id } });
-}
-
-// 同じ卓のQRから複数人がほぼ同時に初回注文したとき、素朴な
-// 「探して無ければ作る」だと二人とも「無い」と判定して別々のセッションを
-// 作ってしまう競合状態が起きる（会計が片方にしか反映されなくなる不具合の元）。
-// そこで常に作成をまず試み、DBのユニーク制約（openTableId）違反で弾かれたら
-// 「別のリクエストが先にセッションを作った」ということなので、そちらを読み直す。
-async function getOrCreateActiveSession(tableId: string) {
-  try {
-    return await prisma.tableSession.create({ data: { tableId, openTableId: tableId } });
-  } catch (error) {
-    if (!isUniqueConstraintError(error)) throw error;
-    const existing = await prisma.tableSession.findFirst({
-      where: { tableId, closedAt: null },
-      orderBy: { startedAt: "desc" },
-    });
-    if (existing) return existing;
-    throw error;
-  }
-}
-
-// ---- 注文番号（フリー席方式） -------------------------------------------------
+// ---- 注文番号 -------------------------------------------------------------
 
 async function nextDailyOrderNumber(): Promise<number> {
   const dateKey = getJSTDateKey();
@@ -224,8 +169,6 @@ async function nextDailyOrderNumber(): Promise<number> {
 // ---- 客側: 注文 -----------------------------------------------------------
 
 export async function createOrder(input: {
-  tableNumber?: number;
-  tableToken?: string;
   items: { menuItemId: string; quantity: number }[];
   note?: string;
   idempotencyKey?: string;
@@ -271,90 +214,13 @@ export async function createOrder(input: {
     }
   }
 
-  // 卓方式・番号方式（フリー席の共通QR）は排他ではなく併用できる。店舗の
-  // 運用設定（operationMode）ではなく、リクエストに卓番号があるかどうかで
-  // その注文自体の扱いを決める。
-  if (input.tableNumber == null) {
-    const dailyNumber = await nextDailyOrderNumber();
-    return createWithIdempotency({
-      mode: "number",
-      dailyNumber,
-      note: input.note,
-      idempotencyKey: input.idempotencyKey,
-      items: { create: itemsCreateData },
-    });
-  }
-
-  const table = await getTableByNumber(input.tableNumber);
-  if (!table) throw new Error("卓が見つかりません");
-  if (input.tableToken !== table.qrToken) {
-    throw new Error("卓の確認に失敗しました。QRコードを読み取り直してください");
-  }
-  const session = await getOrCreateActiveSession(table.id);
-
+  const dailyNumber = await nextDailyOrderNumber();
   return createWithIdempotency({
-    mode: "table",
-    tableId: table.id,
-    sessionId: session.id,
+    dailyNumber,
     note: input.note,
     idempotencyKey: input.idempotencyKey,
     items: { create: itemsCreateData },
   });
-}
-
-// スタッフ側で、口頭・電話などQRを経由しない注文を卓に代理入力する。
-// createOrderの卓方式と同じくその卓の進行中セッションに紐づけるだけなので、
-// 客側の注文画面（同じセッションの注文を全件表示する）にもそのまま表示される。
-export async function createStaffOrder(tableNumber: number, items: { menuItemId: string; quantity: number }[]) {
-  if (items.length === 0) throw new Error("注文する商品がありません");
-
-  const menuItems = await prisma.menuItem.findMany({
-    where: { id: { in: items.map((i) => i.menuItemId) }, isAvailable: true },
-  });
-  const menuItemById = new Map(menuItems.map((m) => [m.id, m]));
-  const itemsCreateData = items.map(({ menuItemId, quantity }) => {
-    const menuItem = menuItemById.get(menuItemId);
-    if (!menuItem) throw new Error("商品が見つかりません");
-    if (quantity < 1) throw new Error("数量が不正です");
-    return { menuItemId, name: menuItem.name, price: menuItem.price, quantity };
-  });
-
-  const table = await getTableByNumber(tableNumber);
-  if (!table) throw new Error("卓が見つかりません");
-  const session = await getOrCreateActiveSession(table.id);
-
-  return prisma.order.create({
-    data: {
-      mode: "table",
-      tableId: table.id,
-      sessionId: session.id,
-      note: "スタッフ入力（口頭注文）",
-      items: { create: itemsCreateData },
-    },
-    include: { items: true },
-  });
-}
-
-// 客側の注文画面用。「今この卓に紐づいている最新のセッション」を会計済みかどうか
-// にかかわらず返す（会計直後は closedAt が入った状態で返る）。これにより客側の
-// 画面は「会計が終わったこと」を検知して、それ以上の注文を送れないようロックできる。
-// あえて「進行中のセッションだけ」に絞らないのは、絞ってしまうと会計直後に
-// 該当セッションが見つからなくなり、客の画面には「注文なし」の空の状態にしか
-// 見えず、会計済みであることを伝えられなくなるため。
-export async function getTableOrderStatus(tableNumber: number, token: string) {
-  const table = await getTableByNumber(tableNumber);
-  if (!table || token !== table.qrToken) return null;
-  const session = await prisma.tableSession.findFirst({
-    where: { tableId: table.id },
-    orderBy: { startedAt: "desc" },
-  });
-  if (!session) return { orders: [] as OrderWithItems[], sessionClosed: false };
-  const orders = await prisma.order.findMany({
-    where: { sessionId: session.id },
-    orderBy: { createdAt: "desc" },
-    include: { items: true },
-  });
-  return { orders, sessionClosed: session.closedAt !== null };
 }
 
 export async function getOrderById(id: string) {
@@ -363,66 +229,13 @@ export async function getOrderById(id: string) {
 
 // ---- 店舗側: 注文管理 --------------------------------------------------------
 
-export type KitchenBoard =
-  | {
-      mode: "table";
-      groups: {
-        table: { id: string; number: number; name: string | null; helpRequestedAt: Date | null };
-        orders: OrderWithItems[];
-      }[];
-      // 卓方式の店舗でも、共通QR（卓が決まっていない客用）からの注文は
-      // どの卓にも属さないため別枠で返す。
-      freeOrders: OrderWithItems[];
-    }
-  | { mode: "number"; orders: OrderWithItems[] };
-
-export async function getKitchenOrders(): Promise<KitchenBoard> {
-  const settings = await getSettings();
-
-  if (settings.operationMode === "number") {
-    const orders = await prisma.order.findMany({
-      where: { mode: "number", status: { in: ["pending", "preparing"] } },
-      orderBy: { dailyNumber: "asc" },
-      include: { items: true },
-    });
-    return { mode: "number", orders };
-  }
-
+export async function getKitchenOrders(): Promise<{ orders: OrderWithItems[] }> {
   const orders = await prisma.order.findMany({
-    where: {
-      OR: [
-        { mode: "table", status: { in: [...ACTIVE_STATUSES] } },
-        // 共通QRからの注文は番号方式と同じく、受渡（served）まで進んだら
-        // 一覧から外れる（卓のように会計待ちで残り続ける概念が無いため）。
-        { mode: "number", status: { in: ["pending", "preparing"] } },
-      ],
-    },
-    orderBy: { createdAt: "asc" },
-    include: {
-      items: true,
-      table: { select: { id: true, number: true, name: true, helpRequestedAt: true } },
-    },
+    where: { status: { in: ["pending", "preparing"] } },
+    orderBy: { dailyNumber: "asc" },
+    include: { items: true },
   });
-
-  const byTable = new Map<
-    number,
-    { table: { id: string; number: number; name: string | null; helpRequestedAt: Date | null }; orders: typeof orders }
-  >();
-  const freeOrders: typeof orders = [];
-  for (const order of orders) {
-    if (order.mode === "table" && order.table) {
-      const key = order.table.number;
-      if (!byTable.has(key)) byTable.set(key, { table: order.table, orders: [] });
-      byTable.get(key)!.orders.push(order);
-    } else {
-      freeOrders.push(order);
-    }
-  }
-  return {
-    mode: "table",
-    groups: Array.from(byTable.values()).sort((a, b) => a.table.number - b.table.number),
-    freeOrders: freeOrders.sort((a, b) => (a.dailyNumber ?? 0) - (b.dailyNumber ?? 0)),
-  };
+  return { orders };
 }
 
 export async function updateOrderStatus(orderId: string, status: OrderStatus, cancelReason?: string) {
@@ -437,210 +250,16 @@ export async function rateOrder(orderId: string, rating: number) {
   return prisma.order.update({ where: { id: orderId }, data: { rating } });
 }
 
-export async function checkoutTable(tableNumber: number) {
-  const table = await getTableByNumber(tableNumber);
-  if (!table) throw new Error("卓が見つかりません");
-
-  const session = await prisma.tableSession.findFirst({
-    where: { tableId: table.id, closedAt: null },
-  });
-  if (!session) throw new Error("進行中の会計セッションがありません");
-
-  await prisma.$transaction([
-    prisma.order.updateMany({
-      where: { sessionId: session.id, status: { in: [...ACTIVE_STATUSES] } },
-      data: { status: "paid" },
-    }),
-    prisma.tableSession.update({ where: { id: session.id }, data: { closedAt: new Date(), openTableId: null } }),
-  ]);
-}
-
-// 会計取消の猶予時間。誤タップからの復帰用で、これを過ぎると取消できない。
-const UNDO_CHECKOUT_WINDOW_MS = 5 * 60 * 1000;
-
-export async function undoCheckout(tableNumber: number) {
-  const table = await getTableByNumber(tableNumber);
-  if (!table) throw new Error("卓が見つかりません");
-
-  const session = await prisma.tableSession.findFirst({
-    where: { tableId: table.id, closedAt: { not: null } },
-    orderBy: { closedAt: "desc" },
-  });
-  if (!session || !session.closedAt) throw new Error("直近に会計した記録がありません");
-  if (Date.now() - session.closedAt.getTime() > UNDO_CHECKOUT_WINDOW_MS) {
-    throw new Error("会計から時間が経ちすぎているため取り消せません");
-  }
-
-  try {
-    await prisma.$transaction([
-      prisma.order.updateMany({ where: { sessionId: session.id, status: "paid" }, data: { status: "served" } }),
-      prisma.tableSession.update({ where: { id: session.id }, data: { closedAt: null, openTableId: table.id } }),
-    ]);
-  } catch (error) {
-    if (isUniqueConstraintError(error)) {
-      throw new Error("すでに次のご注文が始まっているため取り消せません");
-    }
-    throw error;
-  }
-}
-
-// ---- 卓: スタッフ呼び出し ----------------------------------------------------
-
-export async function callStaff(tableNumber: number, token: string) {
-  const table = await getTableByNumber(tableNumber);
-  if (!table || token !== table.qrToken) throw new Error("卓の確認に失敗しました");
-  await prisma.restaurantTable.update({ where: { id: table.id }, data: { helpRequestedAt: new Date() } });
-}
-
-export async function resolveHelp(tableNumber: number) {
-  const table = await getTableByNumber(tableNumber);
-  if (!table) throw new Error("卓が見つかりません");
-  await prisma.restaurantTable.update({ where: { id: table.id }, data: { helpRequestedAt: null } });
-}
-
-// ---- 卓: メモ ---------------------------------------------------------------
-
-export async function setTableStaffNote(tableNumber: number, note: string) {
-  const table = await getTableByNumber(tableNumber);
-  if (!table) throw new Error("卓が見つかりません");
-  const session = await prisma.tableSession.findFirst({
-    where: { tableId: table.id, closedAt: null },
-    orderBy: { startedAt: "desc" },
-  });
-  if (!session) throw new Error("進行中のご注文がありません");
-  await prisma.tableSession.update({ where: { id: session.id }, data: { staffNote: note || null } });
-}
-
-// ---- 卓: フロアビュー ---------------------------------------------------------
-
-export type FloorTableStatus = "empty" | "active" | "just_closed";
-
-// 卓ごとにセッション・注文を1件ずつ問い合わせる素朴な実装（N+1）は、卓数が
-// 増えるほどポーリング（8秒ごと）のたびのDB往復が線形に増えて重くなっていた。
-// ここでは全卓分をまとめて3クエリで取得し、JS側でtableIdごとに振り分ける。
-export async function getFloorStatus() {
-  const tables = await getTables();
-  if (tables.length === 0) return [];
-  const tableIds = tables.map((t) => t.id);
-  const now = Date.now();
-  const justClosedSince = new Date(now - UNDO_CHECKOUT_WINDOW_MS);
-
-  const [openSessions, recentClosedSessions, activeOrders] = await Promise.all([
-    // openTableIdのユニーク制約により、1卓につき進行中のセッションは高々1件。
-    prisma.tableSession.findMany({
-      where: { tableId: { in: tableIds }, closedAt: null },
-      select: { id: true, tableId: true, staffNote: true },
-    }),
-    // 会計取消の猶予時間内に閉じたセッションだけを対象にする（それより古い
-    // 履歴は「卓の状況」に不要なため取得しない）。
-    prisma.tableSession.findMany({
-      where: { tableId: { in: tableIds }, closedAt: { gte: justClosedSince } },
-      select: { tableId: true, closedAt: true },
-    }),
-    prisma.order.findMany({
-      where: { tableId: { in: tableIds }, status: { in: [...ACTIVE_STATUSES] } },
-      select: {
-        tableId: true,
-        sessionId: true,
-        createdAt: true,
-        items: { select: { price: true, quantity: true } },
-      },
-    }),
-  ]);
-
-  const openSessionByTable = new Map(openSessions.map((s) => [s.tableId, s]));
-
-  const lastClosedByTable = new Map<string, Date>();
-  for (const s of recentClosedSessions) {
-    if (!s.closedAt) continue;
-    const current = lastClosedByTable.get(s.tableId);
-    if (!current || s.closedAt > current) lastClosedByTable.set(s.tableId, s.closedAt);
-  }
-
-  const ordersByTable = new Map<string, typeof activeOrders>();
-  for (const order of activeOrders) {
-    if (!order.tableId) continue;
-    const list = ordersByTable.get(order.tableId);
-    if (list) list.push(order);
-    else ordersByTable.set(order.tableId, [order]);
-  }
-
-  return tables.map((table) => {
-    const openSession = openSessionByTable.get(table.id);
-    const tableOrders = ordersByTable.get(table.id) ?? [];
-
-    let status: FloorTableStatus = "empty";
-    let canUndoCheckout = false;
-    let subtotal = 0;
-
-    if (openSession) {
-      status = "active";
-      subtotal = tableOrders
-        .filter((o) => o.sessionId === openSession.id)
-        .reduce((s, o) => s + itemsTotal(o.items), 0);
-    } else {
-      const closedAt = lastClosedByTable.get(table.id);
-      if (closedAt) {
-        status = "just_closed";
-        canUndoCheckout = true;
-      }
-    }
-
-    const lastOrderAt = tableOrders.reduce<Date | null>(
-      (max, o) => (!max || o.createdAt > max ? o.createdAt : max),
-      null
-    );
-
-    return {
-      table: { id: table.id, number: table.number, name: table.name },
-      status,
-      subtotal,
-      staffNote: openSession?.staffNote ?? null,
-      helpRequestedAt: table.helpRequestedAt,
-      lastOrderAt,
-      canUndoCheckout,
-    };
-  });
-}
-
-export async function getTodaySessionsForTable(tableNumber: number) {
-  const table = await getTableByNumber(tableNumber);
-  if (!table) return [];
-  const { start, end } = getTodayRangeJST();
-  const sessions = await prisma.tableSession.findMany({
-    where: { tableId: table.id, startedAt: { gte: start, lt: end } },
-    orderBy: { startedAt: "desc" },
-    include: {
-      orders: { select: { status: true, items: { select: { price: true, quantity: true } } } },
-    },
-  });
-  return sessions.map((s) => ({
-    id: s.id,
-    startedAt: s.startedAt,
-    closedAt: s.closedAt,
-    total: s.orders.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + itemsTotal(o.items), 0),
-  }));
-}
-
 // ---- 店舗側: 売上ダッシュボード ---------------------------------------------
 
 export async function getDashboardSummary() {
-  const settings = await getSettings();
   const { start, end } = getTodayRangeJST();
 
-  // 卓方式・番号方式（共通QR）は併用され得るため、店舗の主運用形態に
-  // 関わらず本日の全注文を対象にする。確定/未確定の境目（会計 or 受渡）は
-  // その注文自体のmodeで判定する。
-  const [orders, closedSessions] = await Promise.all([
-    prisma.order.findMany({
-      where: { createdAt: { gte: start, lt: end } },
-      // 金額の集計だけに使うため、表示用の名前などを持つ全カラムのitemsは不要。
-      select: { mode: true, status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
-    }),
-    settings.operationMode === "table"
-      ? prisma.tableSession.count({ where: { closedAt: { gte: start, lt: end } } })
-      : Promise.resolve(undefined),
-  ]);
+  const orders = await prisma.order.findMany({
+    where: { createdAt: { gte: start, lt: end } },
+    // 金額の集計だけに使うため、表示用の名前などを持つ全カラムのitemsは不要。
+    select: { status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
+  });
 
   let confirmedAmount = 0;
   let pendingAmount = 0;
@@ -657,10 +276,9 @@ export async function getDashboardSummary() {
       continue;
     }
     orderCount++;
-    const confirmedStatus: OrderStatus = order.mode === "table" ? "paid" : "served";
-    if (order.status === confirmedStatus) {
+    if (order.status === "served") {
       confirmedAmount += total;
-      if (order.mode === "number") servedCount++;
+      servedCount++;
     } else {
       pendingAmount += total;
     }
@@ -683,14 +301,12 @@ export async function getDashboardSummary() {
   const dinnerTotal = hourlyBreakdown.reduce((s, h) => s + h.dinner, 0);
 
   return {
-    mode: settings.operationMode,
     totalToday,
     confirmedAmount,
     pendingAmount,
     orderCount,
     avgOrderValue,
     cancelledCount,
-    checkoutTableCount: closedSessions,
     servedCount,
     hourlyBreakdown,
     lunchTotal,
@@ -782,7 +398,6 @@ function getRangeForAnalyticsPeriod(period: AnalyticsPeriod): { start: Date; end
   return { start: new Date(todayStart.getTime() - (days - 1) * 24 * 60 * 60 * 1000), end: todayEnd };
 }
 
-// 卓方式・番号方式（共通QR）は併用され得るため、両方の注文を対象にする。
 export async function getOrderAnalytics(period: AnalyticsPeriod) {
   const { start, end } = getRangeForAnalyticsPeriod(period);
 
@@ -840,11 +455,10 @@ export async function getPeriodAnalysis(period: ReportPeriod) {
   const { end } = getTodayRangeJST();
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
 
-  // 卓方式・番号方式（共通QR）は併用され得るため、両方の注文を対象にする。
   const orders = await prisma.order.findMany({
     where: { createdAt: { gte: start, lt: end } },
-    // 日別集計にはmode/status/createdAtと金額計算用のitemsだけあればよい。
-    select: { mode: true, status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
+    // 日別集計にはstatus/createdAtと金額計算用のitemsだけあればよい。
+    select: { status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
   });
 
   const dailyMap = new Map<string, { confirmed: number; pending: number; orderCount: number; cancelledCount: number }>();
@@ -861,8 +475,7 @@ export async function getPeriodAnalysis(period: ReportPeriod) {
     } else {
       const total = itemsTotal(order.items);
       bucket.orderCount++;
-      const confirmedStatus: OrderStatus = order.mode === "table" ? "paid" : "served";
-      if (order.status === confirmedStatus) bucket.confirmed += total;
+      if (order.status === "served") bucket.confirmed += total;
       else bucket.pending += total;
     }
     dailyMap.set(key, bucket);

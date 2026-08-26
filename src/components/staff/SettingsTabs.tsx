@@ -3,13 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-export function SettingsTabs({ showTables }: { showTables: boolean }) {
+export function SettingsTabs() {
   const pathname = usePathname();
 
   const tabs = [
     { href: "/staff/settings/general", label: "一般" },
     { href: "/staff/settings/menu", label: "メニュー" },
-    ...(showTables ? [{ href: "/staff/settings/tables", label: "テーブル" }] : []),
     { href: "/staff/settings/qr", label: "QRコード" },
     { href: "/staff/settings/accounts", label: "アカウント" },
     { href: "/staff/settings/invites", label: "招待コード" },

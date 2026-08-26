@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ALLERGEN_LABEL, formatYen, ORDER_STATUS_LABEL } from "@/lib/format";
-import { RecommendedBanner, StarRating } from "./OrderClient";
 
 interface MenuItemDTO {
   id: string;
@@ -505,6 +504,65 @@ function HistorySheet({
           <span>合計</span>
           <span>{formatYen(grandTotal)}</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RecommendedBanner({
+  categories,
+  onQuickAdd,
+}: {
+  categories: CategoryDTO[];
+  onQuickAdd: (menuItemId: string) => void;
+}) {
+  const recommended = categories.flatMap((c) => c.menuItems).filter((i) => i.isRecommended);
+  if (recommended.length === 0) return null;
+  return (
+    <div className="border-b border-border px-4 py-3">
+      <p className="mb-2 text-xs font-medium text-muted">おすすめ</p>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {recommended.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => onQuickAdd(item.id)}
+            className="w-28 shrink-0 overflow-hidden rounded-xl border border-border bg-surface text-left"
+          >
+            {item.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={item.imageUrl} alt="" className="h-20 w-full object-cover" />
+            ) : (
+              <div className="h-20 w-full bg-background" />
+            )}
+            <div className="px-2 py-1.5">
+              <p className="truncate text-xs font-medium text-foreground">{item.name}</p>
+              <p className="text-[11px] text-muted">{formatYen(item.price)}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StarRating({ value, onRate }: { value: number | null; onRate: (rating: number) => void }) {
+  if (value) {
+    return <p className="mt-1.5 text-xs text-muted">評価: {"★".repeat(value)}{"☆".repeat(5 - value)}</p>;
+  }
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <span className="text-xs text-muted">よろしければ評価をお願いします</span>
+      <div className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            onClick={() => onRate(n)}
+            aria-label={`${n}つ星`}
+            className="text-base text-muted"
+          >
+            ☆
+          </button>
+        ))}
       </div>
     </div>
   );

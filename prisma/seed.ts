@@ -1,5 +1,5 @@
 // デプロイのたびに実行される初期データ投入スクリプト（package.json の
-// vercel-build 参照）。カテゴリ・メニュー・テーブル・スタッフアカウントは
+// vercel-build 参照）。カテゴリ・メニュー・スタッフアカウントは
 // 設定画面から編集できるようになったため、このスクリプトは「まだデータが
 // 何もない場合にだけ」初期値を投入する（既存データは一切上書きしない）。
 import "../src/lib/load-env";
@@ -25,16 +25,6 @@ async function main() {
       data: { email: staffEmail, passwordHash, name: "スタッフ" },
     });
     console.log(`Created initial staff account: ${staffEmail}`);
-  }
-
-  // --- テーブル: 1件も無いときだけ、初期テーブルを作る -------------------------
-  const tableCount = await prisma.restaurantTable.count();
-  if (tableCount === 0) {
-    const count = Number(process.env.TABLE_COUNT ?? 8);
-    for (let number = 1; number <= count; number++) {
-      await prisma.restaurantTable.create({ data: { number, name: `卓${number}` } });
-    }
-    console.log(`Created ${count} initial tables`);
   }
 
   // --- カテゴリ + メニュー: カテゴリが1件も無いときだけ初期メニューを作る ---------

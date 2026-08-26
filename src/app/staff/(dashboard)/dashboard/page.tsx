@@ -8,7 +8,6 @@ export const dynamic = "force-dynamic";
 
 export default async function StaffDashboardPage() {
   const summary = await getDashboardSummary();
-  const isNumberMode = summary.mode === "number";
 
   return (
     <div>
@@ -16,25 +15,19 @@ export default async function StaffDashboardPage() {
       <p className="mb-6 text-sm text-muted">本日の状況をリアルタイムに集計</p>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <StatCard label={isNumberMode ? "受け渡し済み（目安）" : "確定売上"} value={formatYen(summary.confirmedAmount)} />
-        <StatCard label={isNumberMode ? "対応待ち（目安）" : "進行中の見込み"} value={formatYen(summary.pendingAmount)} />
+        <StatCard label="受け渡し済み（目安）" value={formatYen(summary.confirmedAmount)} />
+        <StatCard label="対応待ち（目安）" value={formatYen(summary.pendingAmount)} />
         <StatCard label="本日の注文件数" value={String(summary.orderCount)} unit="件" />
         <StatCard label="客単価（注文平均）" value={formatYen(summary.avgOrderValue)} />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 md:w-1/2">
-        {isNumberMode ? (
-          <StatCard label="受け渡し件数" value={String(summary.servedCount)} unit="件" />
-        ) : (
-          <StatCard label="本日の会計卓数" value={String(summary.checkoutTableCount)} unit="卓" />
-        )}
+        <StatCard label="受け渡し件数" value={String(summary.servedCount)} unit="件" />
         <StatCard label="取消件数" value={String(summary.cancelledCount)} unit="件" />
       </div>
 
       <p className="mt-4 text-xs text-muted">
-        {isNumberMode
-          ? "受け渡し済み＝スタッフが「受け渡し済み」にした注文　／　対応待ち＝まだ調理中・受付中の注文。会計は別システムで行うため、金額はあくまで目安です。"
-          : "確定売上＝会計・受け渡しが完了した注文　／　進行中の見込み＝まだ会計前・受け渡し前の注文"}
+        受け渡し済み＝スタッフが「受渡済み」にした注文　／　対応待ち＝まだ調理中・受付中の注文。会計は別システムで行うため、金額はあくまで目安です。
       </p>
 
       <DashboardCharts

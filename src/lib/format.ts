@@ -18,8 +18,7 @@ export function formatDate(date: Date): string {
 export const ORDER_STATUS_LABEL: Record<string, string> = {
   pending: "新規注文",
   preparing: "調理中",
-  served: "提供済み",
-  paid: "会計済み",
+  served: "受渡済み",
   cancelled: "取消",
 };
 

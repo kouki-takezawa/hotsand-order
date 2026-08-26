@@ -24,28 +24,6 @@ export default async function GeneralSettingsPage(props: PageProps<"/staff/setti
         </div>
 
         <div>
-          <p className="mb-2 text-xs font-medium text-muted">運用方式</p>
-          <div className="space-y-2">
-            <label className="flex items-start gap-3 rounded-xl border border-border p-3 has-checked:border-accent has-checked:bg-background">
-              <input type="radio" name="operationMode" value="table" defaultChecked={settings.operationMode === "table"} className="mt-1" />
-              <span>
-                <span className="block text-sm font-medium text-foreground">席あり（卓方式）</span>
-                <span className="block text-xs text-muted">席ごとにQRコードを設置し、卓単位で注文をまとめて会計する</span>
-              </span>
-            </label>
-            <label className="flex items-start gap-3 rounded-xl border border-border p-3 has-checked:border-accent has-checked:bg-background">
-              <input type="radio" name="operationMode" value="number" defaultChecked={settings.operationMode === "number"} className="mt-1" />
-              <span>
-                <span className="block text-sm font-medium text-foreground">フリー席（注文番号方式）</span>
-                <span className="block text-xs text-muted">
-                  席を指定せず、注文ごとに番号を発行する。会計は別システムで行う前提（このアプリでは行わない）
-                </span>
-              </span>
-            </label>
-          </div>
-        </div>
-
-        <div>
           <p className="mb-2 text-xs font-medium text-muted">Wi-Fi案内（任意・客側の注文画面に表示）</p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <input

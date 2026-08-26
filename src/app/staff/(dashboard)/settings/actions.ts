@@ -12,15 +12,11 @@ import {
   createMenuItem,
   updateMenuItem,
   deleteMenuItem,
-  createTable,
-  renameTable,
-  deleteTable,
   createStaffAccount,
   deleteStaffAccount,
   resetStaffPassword,
   createStaffInvite,
   deleteStaffInvite,
-  type OperationMode,
 } from "@/lib/data";
 import { ALLERGEN_CODES } from "@/lib/format";
 
@@ -51,12 +47,10 @@ async function runOrRedirectWithError(path: string, fn: () => Promise<unknown>) 
 export async function updateGeneralSettingsAction(formData: FormData) {
   await requireAuth();
   const restaurantName = str(formData, "restaurantName");
-  const operationMode = str(formData, "operationMode") as OperationMode;
   const wifiSsid = str(formData, "wifiSsid");
   const wifiPassword = str(formData, "wifiPassword");
   await updateSettings({
     restaurantName: restaurantName || undefined,
-    operationMode: operationMode === "number" ? "number" : "table",
     wifiSsid: wifiSsid || null,
     wifiPassword: wifiPassword || null,
   });
@@ -153,35 +147,6 @@ export async function deleteMenuItemAction(formData: FormData) {
   if (!id) return;
   await runOrRedirectWithError("/staff/settings/menu", () => deleteMenuItem(id));
   revalidatePath("/staff/settings/menu");
-}
-
-// ---- テーブル -----------------------------------------------------------------
-
-export async function addTableAction(formData: FormData) {
-  await requireAuth();
-  const name = str(formData, "name");
-  await createTable(name || undefined);
-  revalidatePath("/staff/settings/tables");
-  revalidatePath("/staff/settings/qr");
-}
-
-export async function renameTableAction(formData: FormData) {
-  await requireAuth();
-  const id = str(formData, "id");
-  const name = str(formData, "name");
-  if (!id || !name) return;
-  await renameTable(id, name);
-  revalidatePath("/staff/settings/tables");
-  revalidatePath("/staff/settings/qr");
-}
-
-export async function deleteTableAction(formData: FormData) {
-  await requireAuth();
-  const id = str(formData, "id");
-  if (!id) return;
-  await runOrRedirectWithError("/staff/settings/tables", () => deleteTable(id));
-  revalidatePath("/staff/settings/tables");
-  revalidatePath("/staff/settings/qr");
 }
 
 // ---- アカウント ---------------------------------------------------------------

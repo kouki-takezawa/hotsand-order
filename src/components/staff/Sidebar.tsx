@@ -16,12 +16,10 @@ export function Sidebar({
   restaurantName,
   dateLabel,
   staffName,
-  operationMode,
 }: {
   restaurantName: string;
   dateLabel: string;
   staffName: string;
-  operationMode: "table" | "number";
 }) {
   const pathname = usePathname();
 
@@ -30,9 +28,6 @@ export function Sidebar({
       <div>
         <p className="text-base font-bold text-foreground">{restaurantName}</p>
         <p className="mt-0.5 text-xs text-muted">{dateLabel}</p>
-        <p className="mt-1 inline-block rounded-full bg-surface px-2 py-0.5 text-[10px] text-muted">
-          {operationMode === "table" ? "卓方式" : "注文番号方式"}
-        </p>
 
         <nav className="mt-6 flex flex-col gap-1">
           {NAV_ITEMS.map((item) => {

@@ -38,32 +38,10 @@ model StaffInvite {
 model Settings {
   id             String   @id @default("singleton")
   restaurantName String   @default("ホットサンドスタンド")
-  // "table"（席を作って卓ごとに注文を受け取る） | "number"（フリー席・注文番号を発行する）
-  operationMode  String   @default("number")
   // 客側の注文画面に表示するWi-Fi案内（任意）。どちらも未設定なら表示しない。
   wifiSsid       String?
   wifiPassword   String?
   updatedAt      DateTime @updatedAt
-}
-
-model RestaurantTable {
-  id        String   @id @default(cuid())
-  number    Int      @unique
-  name      String?
-  createdAt DateTime @default(now())
-  // QRコードのURLに埋め込むランダムトークン。卓番号だけでは推測でアクセス
-  // できてしまうため、これと一致しない限り客側の注文画面・APIを拒否する。
-  // あえて@default()を付けていない: cuid()/uuid()のような関数デフォルトは
-  // 既存行への一括バックフィルができず、行ごとに異なる値が必要なこの
-  // カラムをmigrationファイルを持たないdb push運用で既存テーブルに安全に
-  // 追加できない。アプリ側（createTable、および既存卓向けの一度きりの
-  // バックフィルスクリプト）で明示的にcrypto.randomUUID()を発行する。
-  qrToken   String?  @unique
-  // 客が「スタッフを呼ぶ」を押した時刻。対応済みになったらnullに戻す。
-  helpRequestedAt DateTime?
-
-  orders       Order[]
-  sessions     TableSession[]
 }
 
 model Category {
@@ -98,30 +76,7 @@ model MenuItem {
   orderItems OrderItem[]
 }
 
-// 卓の会計セッション（卓方式のみで使用）。QRから注文を始めてから会計するまでの
-// 一続きをまとめる。同じ卓で複数人が同時に別々に端末から注文しても、進行中の
-// セッションがあればそこに注文が積み重なる。
-model TableSession {
-  id        String    @id @default(cuid())
-  tableId   String
-  table     RestaurantTable @relation(fields: [tableId], references: [id])
-  // 開いている間だけ tableId と同じ値を持ち、会計（closedAt確定）と同時にnullへ
-  // 戻すフラグ用カラム。ユニーク制約により「1卓につき進行中のセッションは常に
-  // 高々1つ」をDBレベルで保証し、複数人が同時にQRから初回注文したときに別々の
-  // セッションが二重生成される競合状態を防ぐ。
-  openTableId String?   @unique
-  startedAt DateTime  @default(now())
-  closedAt  DateTime?
-  // スタッフだけが見られる、この来店グループ（会計セッション）についてのメモ
-  // （アレルギー・記念日など）。
-  staffNote String?
-
-  orders Order[]
-
-  @@index([tableId, closedAt])
-}
-
-// 注文番号方式で使う、日付ごとの通し番号カウンタ。JSTの日付文字列
+// 日付ごとの通し番号カウンタ。JSTの日付文字列
 // （例: "2026-08-21"）をキーにして、日が変わったら1から採番し直す。
 model OrderCounter {
   dateKey String @id
@@ -130,17 +85,9 @@ model OrderCounter {
 
 model Order {
   id        String   @id @default(cuid())
-  // 注文発生時点の運用モードを記録する（"table" | "number"）。設定を後で
-  // 変更しても過去の注文の扱いが変わらないようにするため。
-  mode      String
-  tableId   String?
-  table     RestaurantTable? @relation(fields: [tableId], references: [id])
-  sessionId String?
-  session   TableSession?    @relation(fields: [sessionId], references: [id])
-  // 注文番号方式のみで使用（卓方式ではnull）
-  dailyNumber Int?
-  // pending(受付) -> preparing(調理中) -> served(提供済み/受け渡し済み) ->
-  // paid(会計済み、卓方式のみ) / cancelled(取消、いつでも遷移しうる)
+  // 「本日の注文番号」（OrderCounterによるJST日付ごとの連番）。
+  dailyNumber Int
+  // pending(受付) -> preparing(調理中) -> served(受け渡し済み) / cancelled(取消、いつでも遷移しうる)
   status    String   @default("pending")
   note      String?
   // 取消（cancelled）にした理由（任意）: customer | kitchen | out_of_stock
@@ -156,12 +103,7 @@ model Order {
   items OrderItem[]
 
   @@index([status, createdAt])
-  @@index([mode, dailyNumber])
-  // 客側のポーリング（getTableOrderStatus）・会計・会計取消がすべて
-  // sessionId で絞り込むため、注文が増えるほど効いてくる想定で追加。
-  @@index([sessionId])
-  // フロアビュー（卓の状況）が tableId で絞り込むため追加。
-  @@index([tableId])
+  @@index([dailyNumber])
 }
 
 model OrderItem {

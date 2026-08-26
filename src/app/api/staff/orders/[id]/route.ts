@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireStaffSession } from "@/lib/apiAuth";
 import { updateOrderStatus, type OrderStatus } from "@/lib/data";
 
-const VALID_STATUSES: OrderStatus[] = ["pending", "preparing", "served", "paid", "cancelled"];
+const VALID_STATUSES: OrderStatus[] = ["pending", "preparing", "served", "cancelled"];
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await requireStaffSession(request);

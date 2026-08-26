@@ -2,7 +2,7 @@
 // prisma/reset-menu.ts（既存メニューをこの内容に一括更新するスクリプト）の両方から
 // 参照する、唯一の正（single source of truth）。メニュー内容を変更するときはここを
 // 直接編集するのではなく、通常は設定＞メニュー画面から行う。ここを直接編集するのは
-// 「紙メニューが刷新された」など、初期データ・一括更新の基準そのものを変えたいとき。
+// 「メニューが刷新された」など、初期データ・一括更新の基準そのものを変えたいとき。
 
 export interface MenuDataItem {
   name: string;
@@ -19,41 +19,18 @@ export interface MenuDataCategory {
 
 export const CURRENT_MENU: MenuDataCategory[] = [
   {
-    name: "定番ホットサンド",
+    name: "ホットサンド",
     sortOrder: 0,
     items: [
       { name: "ハム&チーズ", price: 550 },
-      { name: "ツナマヨ&コーン", price: 600 },
-      { name: "たまごサンド", price: 550 },
       { name: "ベーコンエッグ", price: 650, isRecommended: true },
-      { name: "ミックスチーズ", price: 600, description: "3種のチーズをたっぷりと" },
-      { name: "ポテトベーコン", price: 650 },
-    ],
-  },
-  {
-    name: "こだわりホットサンド",
-    sortOrder: 1,
-    items: [
       { name: "照り焼きチキン", price: 750, isRecommended: true },
-      { name: "アボカドシュリンプ", price: 800, isRecommended: true },
-      { name: "ローストビーフ", price: 900 },
-      { name: "ナポリタン", price: 700, description: "喫茶店風の粉チーズがけ" },
-      { name: "明太マヨポテト", price: 700 },
-      { name: "カレーチーズ", price: 750 },
-    ],
-  },
-  {
-    name: "スイーツホットサンド",
-    sortOrder: 2,
-    items: [
       { name: "チョコバナナ", price: 600 },
-      { name: "シナモンアップル", price: 650 },
-      { name: "ベリークリームチーズ", price: 700, isRecommended: true },
     ],
   },
   {
     name: "サイド",
-    sortOrder: 3,
+    sortOrder: 1,
     items: [
       { name: "フライドポテト", price: 400 },
       { name: "コールスロー", price: 350 },
@@ -63,14 +40,14 @@ export const CURRENT_MENU: MenuDataCategory[] = [
   },
   {
     name: "セット",
-    sortOrder: 4,
+    sortOrder: 2,
     items: [
       { name: "サンド+ポテト+ドリンクセット", price: 350, description: "お好みのホットサンドに追加で。単品価格からの割引はレジ表示分を加算" },
     ],
   },
   {
     name: "ドリンク",
-    sortOrder: 5,
+    sortOrder: 3,
     items: [
       { name: "ブレンドコーヒー", price: 400 },
       { name: "カフェラテ", price: 450 },

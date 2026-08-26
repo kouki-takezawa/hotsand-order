@@ -24,7 +24,6 @@ export default async function StaffDashboardLayout({ children }: { children: Rea
         restaurantName={settings.restaurantName}
         dateLabel={dateLabel}
         staffName={session.user.email ?? "スタッフ"}
-        operationMode={settings.operationMode}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <MobileNav restaurantName={settings.restaurantName} />
