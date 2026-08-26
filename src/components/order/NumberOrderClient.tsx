@@ -67,11 +67,15 @@ export function NumberOrderClient({
   categories,
   wifiSsid,
   wifiPassword,
+  locationId,
+  locationName,
 }: {
   restaurantName: string;
   categories: CategoryDTO[];
   wifiSsid?: string | null;
   wifiPassword?: string | null;
+  locationId?: string;
+  locationName?: string;
 }) {
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id ?? "");
   const [showWifi, setShowWifi] = useState(false);
@@ -176,7 +180,7 @@ export function NumberOrderClient({
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, idempotencyKey }),
+        body: JSON.stringify({ items, idempotencyKey, locationId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "注文に失敗しました");
@@ -219,6 +223,7 @@ export function NumberOrderClient({
     return (
       <div className="flex min-h-screen flex-col items-center bg-background px-6 py-10">
         <p className="text-xs text-muted">{restaurantName}</p>
+        {locationName && <p className="mt-1 text-xs text-muted">受け取り店舗: {locationName}</p>}
         <p className="mt-6 text-sm text-muted">あなたの注文番号</p>
         <p className="mt-1 text-6xl font-black tabular-nums text-foreground">#{latestOrder.dailyNumber}</p>
         <span className="mt-4 rounded-full bg-surface px-4 py-1.5 text-sm font-medium text-foreground">
@@ -279,6 +284,7 @@ export function NumberOrderClient({
           <div className="min-w-0">
             <p className="text-xs text-muted">{restaurantName}</p>
             <h1 className="text-lg font-bold text-foreground">ご注文</h1>
+            {locationName && <p className="text-xs text-muted">{locationName}</p>}
           </div>
           {orders.length > 0 && (
             <button

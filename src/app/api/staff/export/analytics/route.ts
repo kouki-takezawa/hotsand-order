@@ -26,11 +26,16 @@ export async function GET(request: Request) {
     headers: ["カテゴリー", "販売数", "売上"],
     rows: analytics.categoryBreakdown.map((c) => [c.name, c.quantity, c.revenue]),
   };
+  const locationSheet: ExportSheet = {
+    name: "設置場所別",
+    headers: ["設置場所", "注文件数", "売上"],
+    rows: analytics.locationBreakdown.map((l) => [l.name, l.orderCount, l.revenue]),
+  };
 
   const filename = `注文分析_${period}.${format}`;
   if (format === "csv") {
     return new NextResponse(toCsv(topItemsSheet), { headers: csvResponseHeaders(filename) });
   }
-  const blob = await toXlsxBlob([topItemsSheet, categorySheet]);
+  const blob = await toXlsxBlob([topItemsSheet, categorySheet, locationSheet]);
   return new NextResponse(blob, { headers: xlsxResponseHeaders(filename) });
 }

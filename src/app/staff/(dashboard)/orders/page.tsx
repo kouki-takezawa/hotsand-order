@@ -4,12 +4,13 @@ import { OrdersBoard } from "@/components/staff/OrdersBoard";
 // 注文状況をリアルタイムに反映するため、ビルド時の静的プリレンダーを禁止する
 export const dynamic = "force-dynamic";
 
-function serializeOrder(order: Parameters<typeof orderTotal>[0]) {
+function serializeOrder(order: Parameters<typeof orderTotal>[0] & { location: { name: string } | null }) {
   return {
     id: order.id,
     status: order.status,
     note: order.note,
     dailyNumber: order.dailyNumber,
+    locationName: order.location?.name ?? null,
     createdAt: order.createdAt.toISOString(),
     items: order.items.map((item) => ({ id: item.id, name: item.name, price: item.price, quantity: item.quantity })),
     total: orderTotal(order),

@@ -65,6 +65,24 @@ export default async function StaffAnalyticsPage(props: PageProps<"/staff/analyt
           <p className="mb-4 text-xs text-muted">{PERIOD_LABEL[period]}の売上をカテゴリーごとに集計</p>
           <CategoryPie data={analytics.categoryBreakdown} />
         </div>
+
+        <div className="rounded-2xl border border-border bg-surface p-4 xl:col-span-2">
+          <h2 className="text-sm font-bold text-foreground">設置場所別の注文状況</h2>
+          <p className="mb-4 text-xs text-muted">{PERIOD_LABEL[period]}に、どの設置場所からどれだけ注文されたか</p>
+          {analytics.locationBreakdown.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted">データがありません</p>
+          ) : (
+            <ul className="space-y-2">
+              {analytics.locationBreakdown.map((loc) => (
+                <li key={loc.name} className="flex items-center gap-3 text-sm">
+                  <span className="min-w-0 flex-1 truncate text-foreground">{loc.name}</span>
+                  <span className="shrink-0 text-muted">{loc.orderCount}件</span>
+                  <span className="w-24 shrink-0 text-right font-medium text-foreground">{formatYen(loc.revenue)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );

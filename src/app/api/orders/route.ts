@@ -6,12 +6,14 @@ interface CreateOrderBody {
   items: { menuItemId: string; quantity: number }[];
   note?: string;
   idempotencyKey?: string;
+  locationId?: string;
 }
 
 function isValidBody(body: unknown): body is CreateOrderBody {
   if (!body || typeof body !== "object") return false;
   const b = body as Record<string, unknown>;
   if (b.idempotencyKey !== undefined && typeof b.idempotencyKey !== "string") return false;
+  if (b.locationId !== undefined && typeof b.locationId !== "string") return false;
   if (!Array.isArray(b.items) || b.items.length === 0) return false;
   return b.items.every(
     (i) =>
@@ -42,6 +44,7 @@ export async function POST(request: Request) {
       items: body.items,
       note: body.note?.slice(0, 500),
       idempotencyKey: body.idempotencyKey,
+      locationId: body.locationId,
     });
     return NextResponse.json({ order }, { status: 201 });
   } catch (error) {

@@ -154,6 +154,31 @@ export async function deleteMenuItem(id: string) {
   return prisma.menuItem.delete({ where: { id } });
 }
 
+// ---- 設置場所（QR設置先の提携店舗） ------------------------------------------
+
+export async function listLocations() {
+  return prisma.location.findMany({ orderBy: { sortOrder: "asc" } });
+}
+
+export async function getLocationById(id: string) {
+  return prisma.location.findUnique({ where: { id } });
+}
+
+export async function createLocation(name: string) {
+  const max = await prisma.location.aggregate({ _max: { sortOrder: true } });
+  return prisma.location.create({ data: { name, sortOrder: (max._max.sortOrder ?? -1) + 1 } });
+}
+
+export async function renameLocation(id: string, name: string) {
+  return prisma.location.update({ where: { id }, data: { name } });
+}
+
+export async function deleteLocation(id: string) {
+  const count = await prisma.order.count({ where: { locationId: id } });
+  if (count > 0) throw new Error("注文履歴がある設置場所は削除できません");
+  return prisma.location.delete({ where: { id } });
+}
+
 // ---- 注文番号 -------------------------------------------------------------
 
 async function nextDailyOrderNumber(): Promise<number> {
@@ -172,6 +197,7 @@ export async function createOrder(input: {
   items: { menuItemId: string; quantity: number }[];
   note?: string;
   idempotencyKey?: string;
+  locationId?: string;
 }) {
   // 冪等キーが指定されていて、すでに同じキーの注文が存在するなら新規作成せず
   // それをそのまま返す。通信不安定でクライアントが同じ送信を自動的にやり直した
@@ -214,9 +240,16 @@ export async function createOrder(input: {
     }
   }
 
+  // 設置場所のQRが古くなって既に削除済みのidを指していても、注文自体は
+  // ブロックしない（locationIdを付けずに通常の共通QR注文として扱う）。
+  const locationId = input.locationId
+    ? (await prisma.location.findUnique({ where: { id: input.locationId }, select: { id: true } }))?.id
+    : undefined;
+
   const dailyNumber = await nextDailyOrderNumber();
   return createWithIdempotency({
     dailyNumber,
+    locationId,
     note: input.note,
     idempotencyKey: input.idempotencyKey,
     items: { create: itemsCreateData },
@@ -224,16 +257,16 @@ export async function createOrder(input: {
 }
 
 export async function getOrderById(id: string) {
-  return prisma.order.findUnique({ where: { id }, include: { items: true } });
+  return prisma.order.findUnique({ where: { id }, include: { items: true, location: { select: { name: true } } } });
 }
 
 // ---- 店舗側: 注文管理 --------------------------------------------------------
 
-export async function getKitchenOrders(): Promise<{ orders: OrderWithItems[] }> {
+export async function getKitchenOrders() {
   const orders = await prisma.order.findMany({
     where: { status: { in: ["pending", "preparing"] } },
     orderBy: { dailyNumber: "asc" },
-    include: { items: true },
+    include: { items: true, location: { select: { name: true } } },
   });
   return { orders };
 }
@@ -401,20 +434,22 @@ function getRangeForAnalyticsPeriod(period: AnalyticsPeriod): { start: Date; end
 export async function getOrderAnalytics(period: AnalyticsPeriod) {
   const { start, end } = getRangeForAnalyticsPeriod(period);
 
-  const [items, orderCount] = await Promise.all([
+  const [items, orders] = await Promise.all([
     prisma.orderItem.findMany({
       where: { order: { createdAt: { gte: start, lt: end }, status: { not: "cancelled" } } },
       // カテゴリー名以外のmenuItemの全カラム（価格・説明・写真URLなど）は
       // 集計に使わないため取得しない。
       include: { menuItem: { select: { category: { select: { name: true } } } } },
     }),
-    prisma.order.count({
+    prisma.order.findMany({
       where: { createdAt: { gte: start, lt: end }, status: { not: "cancelled" } },
+      select: { location: { select: { name: true } }, items: { select: { price: true, quantity: true } } },
     }),
   ]);
 
   const byItem = new Map<string, { name: string; quantity: number; revenue: number }>();
   const byCategory = new Map<string, { name: string; quantity: number; revenue: number }>();
+  const byLocation = new Map<string, { name: string; orderCount: number; revenue: number }>();
 
   for (const item of items) {
     const revenue = item.price * item.quantity;
@@ -431,9 +466,18 @@ export async function getOrderAnalytics(period: AnalyticsPeriod) {
     byCategory.set(categoryName, categoryBucket);
   }
 
+  for (const order of orders) {
+    const locationName = order.location?.name ?? "共通QR（設置場所なし）";
+    const bucket = byLocation.get(locationName) ?? { name: locationName, orderCount: 0, revenue: 0 };
+    bucket.orderCount += 1;
+    bucket.revenue += itemsTotal(order.items);
+    byLocation.set(locationName, bucket);
+  }
+
   const allItems = Array.from(byItem.values());
   const totalQuantity = allItems.reduce((s, i) => s + i.quantity, 0);
   const totalRevenue = allItems.reduce((s, i) => s + i.revenue, 0);
+  const orderCount = orders.length;
 
   return {
     period,
@@ -443,6 +487,7 @@ export async function getOrderAnalytics(period: AnalyticsPeriod) {
     avgItemsPerOrder: orderCount > 0 ? Math.round((totalQuantity / orderCount) * 10) / 10 : 0,
     topItems: allItems.sort((a, b) => b.quantity - a.quantity).slice(0, 10),
     categoryBreakdown: Array.from(byCategory.values()).sort((a, b) => b.revenue - a.revenue),
+    locationBreakdown: Array.from(byLocation.values()).sort((a, b) => b.revenue - a.revenue),
   };
 }
 

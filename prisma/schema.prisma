@@ -76,6 +76,17 @@ model MenuItem {
   orderItems OrderItem[]
 }
 
+// QRコードを設置する提携店舗・拠点。座席やセッションの概念は持たず、
+// 「どこから注文されたか」を注文に紐づけて記録するためだけのタグ。
+model Location {
+  id        String   @id @default(cuid())
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  orders Order[]
+}
+
 // 日付ごとの通し番号カウンタ。JSTの日付文字列
 // （例: "2026-08-21"）をキーにして、日が変わったら1から採番し直す。
 model OrderCounter {
@@ -87,6 +98,9 @@ model Order {
   id        String   @id @default(cuid())
   // 「本日の注文番号」（OrderCounterによるJST日付ごとの連番）。
   dailyNumber Int
+  // どの設置場所のQRから注文されたか（任意。共通QR・未設定なら null）。
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id])
   // pending(受付) -> preparing(調理中) -> served(受け渡し済み) / cancelled(取消、いつでも遷移しうる)
   status    String   @default("pending")
   note      String?
@@ -104,6 +118,7 @@ model Order {
 
   @@index([status, createdAt])
   @@index([dailyNumber])
+  @@index([locationId])
 }
 
 model OrderItem {

@@ -12,6 +12,9 @@ import {
   createMenuItem,
   updateMenuItem,
   deleteMenuItem,
+  createLocation,
+  renameLocation,
+  deleteLocation,
   createStaffAccount,
   deleteStaffAccount,
   resetStaffPassword,
@@ -147,6 +150,36 @@ export async function deleteMenuItemAction(formData: FormData) {
   if (!id) return;
   await runOrRedirectWithError("/staff/settings/menu", () => deleteMenuItem(id));
   revalidatePath("/staff/settings/menu");
+}
+
+// ---- 設置場所 -----------------------------------------------------------------
+
+export async function addLocationAction(formData: FormData) {
+  await requireAuth();
+  const name = str(formData, "name");
+  if (!name) return;
+  await createLocation(name);
+  revalidatePath("/staff/settings/locations");
+  revalidatePath("/staff/settings/qr");
+}
+
+export async function renameLocationAction(formData: FormData) {
+  await requireAuth();
+  const id = str(formData, "id");
+  const name = str(formData, "name");
+  if (!id || !name) return;
+  await renameLocation(id, name);
+  revalidatePath("/staff/settings/locations");
+  revalidatePath("/staff/settings/qr");
+}
+
+export async function deleteLocationAction(formData: FormData) {
+  await requireAuth();
+  const id = str(formData, "id");
+  if (!id) return;
+  await runOrRedirectWithError("/staff/settings/locations", () => deleteLocation(id));
+  revalidatePath("/staff/settings/locations");
+  revalidatePath("/staff/settings/qr");
 }
 
 // ---- アカウント ---------------------------------------------------------------

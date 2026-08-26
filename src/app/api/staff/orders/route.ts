@@ -8,6 +8,10 @@ export async function GET() {
 
   const board = await getKitchenOrders();
   return NextResponse.json({
-    orders: board.orders.map((order) => ({ ...order, total: orderTotal(order) })),
+    orders: board.orders.map((order) => ({
+      ...order,
+      locationName: order.location?.name ?? null,
+      total: orderTotal(order),
+    })),
   });
 }

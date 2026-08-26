@@ -16,6 +16,7 @@ interface OrderDTO {
   note: string | null;
   createdAt: string;
   dailyNumber: number | null;
+  locationName: string | null;
   items: OrderItemDTO[];
   total: number;
 }
@@ -122,6 +123,11 @@ function OrderCard({
           </span>
         )}
       </div>
+      {order.locationName && (
+        <p className="mb-1.5 inline-block rounded-full bg-background px-2 py-0.5 text-[11px] font-medium text-muted">
+          {order.locationName}
+        </p>
+      )}
       <ul className="mb-2 space-y-0.5 text-sm text-foreground">
         {order.items.map((item) => (
           <li key={item.id} className="flex justify-between">

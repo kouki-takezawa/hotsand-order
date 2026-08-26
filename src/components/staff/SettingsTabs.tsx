@@ -9,6 +9,7 @@ export function SettingsTabs() {
   const tabs = [
     { href: "/staff/settings/general", label: "一般" },
     { href: "/staff/settings/menu", label: "メニュー" },
+    { href: "/staff/settings/locations", label: "設置場所" },
     { href: "/staff/settings/qr", label: "QRコード" },
     { href: "/staff/settings/accounts", label: "アカウント" },
     { href: "/staff/settings/invites", label: "招待コード" },
