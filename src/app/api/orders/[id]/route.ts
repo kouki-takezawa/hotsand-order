@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOrderById, getQueueInfo, orderTotal } from "@/lib/data";
+import { getOrderById, getQueueInfo, orderTotal, toPublicOrder } from "@/lib/data";
 
 // 注文番号方式の客側が、自分の注文の状況を確認するための公開エンドポイント。
 // idはcuid（推測不可能）なので、認証なしで参照可能としている。
@@ -10,5 +10,5 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ error: "注文が見つかりません" }, { status: 404 });
   }
   const queue = await getQueueInfo(order);
-  return NextResponse.json({ order: { ...order, total: orderTotal(order), queue } });
+  return NextResponse.json({ order: toPublicOrder({ ...order, total: orderTotal(order), queue }) });
 }

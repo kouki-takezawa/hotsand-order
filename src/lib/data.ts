@@ -23,6 +23,14 @@ export function orderTotal(order: OrderWithItems): number {
   return itemsTotal(order.items);
 }
 
+// 客側のAPIレスポンスからpushSubscription（Web Push購読情報）を取り除く。
+// 送信者本人に対してであっても、公開APIのレスポンスに残す理由がないため。
+export function toPublicOrder<T extends { pushSubscription?: unknown }>(order: T): Omit<T, "pushSubscription"> {
+  const rest: Partial<T> = { ...order };
+  delete rest.pushSubscription;
+  return rest as Omit<T, "pushSubscription">;
+}
+
 // ---- 設定 -------------------------------------------------------------
 
 export async function getSettings() {
@@ -77,7 +85,30 @@ function applyScheduledPricesInPlace<
   return categories;
 }
 
-// 客側の注文画面用（販売中の商品のみ）
+// 客側に見せてよいフィールドだけを残す。pendingPrice/applyAt（未公開の価格改定
+// 予定）やstockCount（正確な残数）、categoryId/sortOrder/createdAtのような内部
+// 管理用の値は、staffUser以外には一切渡さない。
+function toPublicMenuItem(item: {
+  id: string;
+  name: string;
+  price: number;
+  description: string | null;
+  isRecommended: boolean;
+  allergens: string | null;
+  imageUrl: string | null;
+}) {
+  return {
+    id: item.id,
+    name: item.name,
+    price: item.price,
+    description: item.description,
+    isRecommended: item.isRecommended,
+    allergens: item.allergens,
+    imageUrl: item.imageUrl,
+  };
+}
+
+// 客側の注文画面用（販売中の商品のみ、公開してよいフィールドのみ）
 export async function getMenu() {
   const categories = await prisma.category.findMany({
     orderBy: { sortOrder: "asc" },
@@ -88,7 +119,12 @@ export async function getMenu() {
       },
     },
   });
-  return applyScheduledPricesInPlace(categories);
+  const applied = applyScheduledPricesInPlace(categories);
+  return applied.map((category) => ({
+    id: category.id,
+    name: category.name,
+    menuItems: category.menuItems.map(toPublicMenuItem),
+  }));
 }
 
 // 設定画面用（販売停止中の商品も含む）
@@ -188,18 +224,6 @@ export async function deleteLocation(id: string) {
   return prisma.location.delete({ where: { id } });
 }
 
-// ---- 注文番号 -------------------------------------------------------------
-
-async function nextDailyOrderNumber(): Promise<number> {
-  const dateKey = getJSTDateKey();
-  const counter = await prisma.orderCounter.upsert({
-    where: { dateKey },
-    create: { dateKey, count: 1 },
-    update: { count: { increment: 1 } },
-  });
-  return counter.count;
-}
-
 // ---- 客側: 注文 -----------------------------------------------------------
 
 export async function createOrder(input: {
@@ -221,6 +245,18 @@ export async function createOrder(input: {
 
   if (input.items.length === 0) throw new Error("注文する商品がありません");
 
+  // 受付一時停止中は新規注文を拒否する。客側の画面（/order）はこのフラグを
+  // 見て注文画面自体を出さないが、それはUI側のガードに過ぎないため、
+  // 一時停止をタップする前に開いていたタブや直接のAPI呼び出しからの
+  // 注文を防ぐには、ここでも同じチェックが必要（多層防御）。
+  const [settings, orderLocation] = await Promise.all([
+    prisma.settings.findUnique({ where: { id: "singleton" } }),
+    input.locationId ? prisma.location.findUnique({ where: { id: input.locationId } }) : Promise.resolve(null),
+  ]);
+  if (settings?.orderingPaused || orderLocation?.isPaused) {
+    throw new Error("ただいま注文受付を停止しています");
+  }
+
   const menuItems = await prisma.menuItem.findMany({
     where: { id: { in: input.items.map((i) => i.menuItemId) }, isAvailable: true },
   });
@@ -238,7 +274,12 @@ export async function createOrder(input: {
   // 売れることはない（countが0なら在庫不足として弾く）。
   const stockTrackedItems = input.items.filter(({ menuItemId }) => menuItemById.get(menuItemId)?.stockCount != null);
 
-  async function createWithIdempotency(data: Parameters<typeof prisma.order.create>[0]["data"]) {
+  async function createWithIdempotency(data: {
+    locationId?: string;
+    note?: string;
+    idempotencyKey?: string;
+    items: { create: { menuItemId: string; name: string; price: number; quantity: number }[] };
+  }) {
     try {
       return await prisma.$transaction(async (tx) => {
         for (const { menuItemId, quantity } of stockTrackedItems) {
@@ -256,7 +297,15 @@ export async function createOrder(input: {
             data: { isAvailable: false },
           });
         }
-        return tx.order.create({ data, include: { items: true } });
+        // 在庫チェックを通過した注文だけ番号を採番する（このトランザクション内で
+        // 行うことで、在庫不足で失敗した注文のぶんだけ番号が欠番になるのを防ぐ）。
+        const dateKey = getJSTDateKey();
+        const counter = await tx.orderCounter.upsert({
+          where: { dateKey },
+          create: { dateKey, count: 1 },
+          update: { count: { increment: 1 } },
+        });
+        return tx.order.create({ data: { ...data, dailyNumber: counter.count }, include: { items: true } });
       });
     } catch (error) {
       // 冪等キーの競合（ほぼ同時に同じキーで2回送信された）なら、先に作られた
@@ -274,13 +323,9 @@ export async function createOrder(input: {
 
   // 設置場所のQRが古くなって既に削除済みのidを指していても、注文自体は
   // ブロックしない（locationIdを付けずに通常の共通QR注文として扱う）。
-  const locationId = input.locationId
-    ? (await prisma.location.findUnique({ where: { id: input.locationId }, select: { id: true } }))?.id
-    : undefined;
+  const locationId = orderLocation?.id;
 
-  const dailyNumber = await nextDailyOrderNumber();
   return createWithIdempotency({
-    dailyNumber,
     locationId,
     note: input.note,
     idempotencyKey: input.idempotencyKey,
@@ -490,24 +535,41 @@ export async function deleteStaffInvite(id: string) {
   return prisma.staffInvite.delete({ where: { id } });
 }
 
-// コードを検証し、有効なら即座に使用済みにする（同じコードの二重使用を防ぐため、
-// 検証と消費を1つの操作にまとめる）。
-export async function consumeStaffInvite(code: string, usedByEmail: string) {
-  const normalized = code.trim().toUpperCase();
-  const invite = await prisma.staffInvite.findUnique({ where: { code: normalized } });
-  if (!invite) throw new Error("招待コードが正しくありません");
-  if (invite.usedAt) throw new Error("この招待コードは既に使用されています");
-  if (invite.expiresAt && invite.expiresAt.getTime() < Date.now()) throw new Error("この招待コードは有効期限が切れています");
+// 招待コードの検証・消費とアカウント作成を1つのDBトランザクションにまとめる。
+// 以前は別々の呼び出しだったため、アカウント作成だけが失敗した場合
+// （メールアドレス重複など）に招待コードだけが消費されてしまい、本来の
+// 受信者がそのコードを二度と使えなくなる不具合があった。
+export async function registerStaffWithInvite(code: string, email: string, name: string, password: string) {
+  const normalizedCode = code.trim().toUpperCase();
+  const normalizedEmail = email.trim().toLowerCase();
+  const passwordHash = await bcrypt.hash(password, 10);
 
-  try {
-    await prisma.staffInvite.update({
-      where: { id: invite.id, usedAt: null },
-      data: { usedAt: new Date(), usedByEmail },
-    });
-  } catch {
-    // 他のリクエストがほぼ同時にこのコードを消費した場合の競合
-    throw new Error("この招待コードは既に使用されています");
-  }
+  return prisma.$transaction(async (tx) => {
+    const invite = await tx.staffInvite.findUnique({ where: { code: normalizedCode } });
+    if (!invite) throw new Error("招待コードが正しくありません");
+    if (invite.usedAt) throw new Error("この招待コードは既に使用されています");
+    if (invite.expiresAt && invite.expiresAt.getTime() < Date.now()) {
+      throw new Error("この招待コードは有効期限が切れています");
+    }
+
+    try {
+      await tx.staffUser.create({ data: { email: normalizedEmail, name, passwordHash } });
+    } catch (error) {
+      if (isUniqueConstraintError(error)) throw new Error("このメールアドレスは既に登録されています");
+      throw error;
+    }
+
+    try {
+      await tx.staffInvite.update({
+        where: { id: invite.id, usedAt: null },
+        data: { usedAt: new Date(), usedByEmail: normalizedEmail },
+      });
+    } catch {
+      // 他のリクエストがほぼ同時にこのコードを消費した場合の競合。アカウント
+      // 作成ごとロールバックされるので、招待コードが無駄に消費されることはない。
+      throw new Error("この招待コードは既に使用されています");
+    }
+  });
 }
 
 export async function deleteStaffAccount(id: string) {

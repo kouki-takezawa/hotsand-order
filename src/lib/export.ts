@@ -7,9 +7,19 @@ export interface ExportSheet {
   rows: (string | number | null)[][];
 }
 
+// セルの値が =, +, -, @, タブ、改行 で始まる場合、Excel/LibreOffice等は
+// それを数式として評価してしまう（CSVインジェクション / 数式インジェクション）。
+// カテゴリー名・商品名・設置場所名は招待コードで登録した任意のスタッフが
+// 自由に入力できるため、先頭にシングルクォートを足して文字列として固定する。
+const FORMULA_TRIGGER_PATTERN = /^[=+\-@\t\r]/;
+
+function sanitizeForSpreadsheet(s: string): string {
+  return FORMULA_TRIGGER_PATTERN.test(s) ? `'${s}` : s;
+}
+
 function csvCell(value: string | number | null): string {
   if (value == null) return "";
-  const s = String(value);
+  const s = typeof value === "string" ? sanitizeForSpreadsheet(value) : String(value);
   // カンマ・改行・ダブルクォートを含む場合はダブルクォートで囲む（RFC 4180）
   if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
@@ -29,7 +39,9 @@ export async function toXlsxBlob(sheets: ExportSheet[]): Promise<Blob> {
     const ws = workbook.addWorksheet(sheet.name.slice(0, 31));
     ws.addRow(sheet.headers);
     ws.getRow(1).font = { bold: true };
-    for (const row of sheet.rows) ws.addRow(row);
+    for (const row of sheet.rows) {
+      ws.addRow(row.map((cell) => (typeof cell === "string" ? sanitizeForSpreadsheet(cell) : cell)));
+    }
     ws.columns.forEach((col) => {
       let max = 10;
       col.eachCell?.({ includeEmpty: true }, (cell) => {
