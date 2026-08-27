@@ -16,14 +16,14 @@ export function SettingsTabs() {
   ];
 
   return (
-    <div className="flex gap-1 border-b border-border">
+    <div className="flex gap-1 overflow-x-auto border-b border-border">
       {tabs.map((tab) => {
         const active = pathname === tab.href;
         return (
           <Link
             key={tab.href}
             href={tab.href}
-            className={`border-b-2 px-4 py-2 text-sm font-medium ${
+            className={`shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium ${
               active ? "border-accent text-foreground" : "border-transparent text-muted"
             }`}
           >
