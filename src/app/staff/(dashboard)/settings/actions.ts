@@ -15,6 +15,7 @@ import {
   createLocation,
   renameLocation,
   deleteLocation,
+  setLocationPaused,
   createStaffAccount,
   deleteStaffAccount,
   resetStaffPassword,
@@ -52,12 +53,15 @@ export async function updateGeneralSettingsAction(formData: FormData) {
   const restaurantName = str(formData, "restaurantName");
   const wifiSsid = str(formData, "wifiSsid");
   const wifiPassword = str(formData, "wifiPassword");
+  const orderingPaused = formData.get("orderingPaused") === "on";
   await updateSettings({
     restaurantName: restaurantName || undefined,
     wifiSsid: wifiSsid || null,
     wifiPassword: wifiPassword || null,
+    orderingPaused,
   });
   revalidatePath("/staff", "layout");
+  revalidatePath("/order");
 }
 
 // ---- メニュー -----------------------------------------------------------------
@@ -91,6 +95,13 @@ function allergensFromForm(formData: FormData): string {
   return ALLERGEN_CODES.filter((code) => formData.get(`allergen_${code}`) === "on").join(",");
 }
 
+function stockCountFromForm(formData: FormData): number | null {
+  const raw = str(formData, "stockCount");
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+}
+
 export async function addMenuItemAction(formData: FormData) {
   await requireAuth();
   const categoryId = str(formData, "categoryId");
@@ -100,6 +111,7 @@ export async function addMenuItemAction(formData: FormData) {
   const isRecommended = formData.get("isRecommended") === "on";
   const allergens = allergensFromForm(formData);
   const imageUrl = str(formData, "imageUrl");
+  const stockCount = stockCountFromForm(formData);
   if (!categoryId || !name || !Number.isFinite(price) || price < 0) return;
   await createMenuItem({
     categoryId,
@@ -109,6 +121,7 @@ export async function addMenuItemAction(formData: FormData) {
     isRecommended,
     allergens: allergens || undefined,
     imageUrl: imageUrl || undefined,
+    stockCount,
   });
   revalidatePath("/staff/settings/menu");
 }
@@ -125,6 +138,7 @@ export async function updateMenuItemAction(formData: FormData) {
   const pendingPriceRaw = str(formData, "pendingPrice");
   const applyAtRaw = str(formData, "applyAt");
   const imageUrl = str(formData, "imageUrl");
+  const stockCount = stockCountFromForm(formData);
   if (!id || !name || !Number.isFinite(price) || price < 0) return;
 
   const pendingPrice = pendingPriceRaw ? Number(pendingPriceRaw) : null;
@@ -140,7 +154,16 @@ export async function updateMenuItemAction(formData: FormData) {
     pendingPrice: pendingPrice != null && Number.isFinite(pendingPrice) ? pendingPrice : null,
     applyAt,
     imageUrl: imageUrl || null,
+    stockCount,
   });
+  revalidatePath("/staff/settings/menu");
+}
+
+export async function cancelScheduledPriceAction(formData: FormData) {
+  await requireAuth();
+  const id = str(formData, "id");
+  if (!id) return;
+  await updateMenuItem(id, { pendingPrice: null, applyAt: null });
   revalidatePath("/staff/settings/menu");
 }
 
@@ -180,6 +203,15 @@ export async function deleteLocationAction(formData: FormData) {
   await runOrRedirectWithError("/staff/settings/locations", () => deleteLocation(id));
   revalidatePath("/staff/settings/locations");
   revalidatePath("/staff/settings/qr");
+}
+
+export async function toggleLocationPausedAction(formData: FormData) {
+  await requireAuth();
+  const id = str(formData, "id");
+  const isPaused = str(formData, "isPaused") === "true";
+  if (!id) return;
+  await setLocationPaused(id, isPaused);
+  revalidatePath("/staff/settings/locations");
 }
 
 // ---- アカウント ---------------------------------------------------------------

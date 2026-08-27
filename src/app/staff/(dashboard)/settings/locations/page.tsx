@@ -2,7 +2,12 @@ import { listLocations } from "@/lib/data";
 import { ErrorBanner } from "@/components/staff/ErrorBanner";
 import { ConfirmButton } from "@/components/staff/ConfirmButton";
 import { SubmitButton } from "@/components/staff/SubmitButton";
-import { addLocationAction, renameLocationAction, deleteLocationAction } from "../actions";
+import {
+  addLocationAction,
+  renameLocationAction,
+  deleteLocationAction,
+  toggleLocationPausedAction,
+} from "../actions";
 
 export default async function LocationsSettingsPage(props: PageProps<"/staff/settings/locations">) {
   const { error } = await props.searchParams;
@@ -13,34 +18,48 @@ export default async function LocationsSettingsPage(props: PageProps<"/staff/set
       <ErrorBanner error={typeof error === "string" ? error : undefined} />
 
       <p className="mb-4 text-sm text-muted">
-        QRコードを設置する提携店舗・拠点の一覧です。追加すると、QRコードタブでその拠点専用のQRコードが発行されます。そのQRから来た注文は「どこから注文されたか」として注文管理・分析画面に記録されます。
+        QRコードを設置する提携店舗・拠点の一覧です。追加すると、QRコードタブでその拠点専用のQRコードが発行されます。そのQRから来た注文は「どこから注文されたか」として注文管理・分析画面に記録されます。一時的に受付を止めたい店舗は「一時停止」にすると、そのQRを読み取った客に受付停止中の案内が表示されます。
       </p>
 
       <div className="space-y-2">
         {locations.map((location) => (
-          <form
-            key={location.id}
-            action={renameLocationAction}
-            className="flex items-center gap-2 rounded-xl border border-border bg-surface p-3"
-          >
-            <input type="hidden" name="id" value={location.id} />
-            <input
-              type="text"
-              name="name"
-              defaultValue={location.name}
-              className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-            />
-            <SubmitButton className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
-              保存
-            </SubmitButton>
-            <ConfirmButton
-              confirmText={`「${location.name}」を削除しますか？`}
-              formAction={deleteLocationAction}
-              className="rounded-full border border-border px-3 py-1.5 text-xs text-warning"
-            >
-              削除
-            </ConfirmButton>
-          </form>
+          <div key={location.id} className="rounded-xl border border-border bg-surface p-3">
+            <form action={renameLocationAction} className="flex items-center gap-2">
+              <input type="hidden" name="id" value={location.id} />
+              <input
+                type="text"
+                name="name"
+                defaultValue={location.name}
+                className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+              />
+              <SubmitButton className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
+                保存
+              </SubmitButton>
+              <ConfirmButton
+                confirmText={`「${location.name}」を削除しますか？`}
+                formAction={deleteLocationAction}
+                className="rounded-full border border-border px-3 py-1.5 text-xs text-warning"
+              >
+                削除
+              </ConfirmButton>
+            </form>
+            <div className="mt-2 flex items-center justify-between">
+              <span
+                className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                  location.isPaused ? "border border-warning text-warning" : "border border-border text-muted"
+                }`}
+              >
+                {location.isPaused ? "一時停止中" : "受付中"}
+              </span>
+              <form action={toggleLocationPausedAction}>
+                <input type="hidden" name="id" value={location.id} />
+                <input type="hidden" name="isPaused" value={String(!location.isPaused)} />
+                <SubmitButton className="text-xs text-muted underline underline-offset-4">
+                  {location.isPaused ? "受付を再開する" : "一時停止する"}
+                </SubmitButton>
+              </form>
+            </div>
+          </div>
         ))}
         {locations.length === 0 && <p className="text-xs text-muted">設置場所がまだ登録されていません</p>}
       </div>

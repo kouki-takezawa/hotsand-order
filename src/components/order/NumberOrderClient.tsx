@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ALLERGEN_LABEL, formatYen, ORDER_STATUS_LABEL } from "@/lib/format";
+import { ALLERGEN_CODES, ALLERGEN_LABEL, formatYen, ORDER_STATUS_LABEL } from "@/lib/format";
 
 interface MenuItemDTO {
   id: string;
@@ -13,12 +13,23 @@ interface MenuItemDTO {
   imageUrl: string | null;
 }
 
+function allergenCodesOf(allergens: string | null): string[] {
+  return allergens ? allergens.split(",").filter(Boolean) : [];
+}
+
 function allergenLabels(allergens: string | null): string[] {
-  if (!allergens) return [];
-  return allergens
-    .split(",")
+  return allergenCodesOf(allergens)
     .map((code) => ALLERGEN_LABEL[code as keyof typeof ALLERGEN_LABEL])
     .filter((label): label is string => Boolean(label));
+}
+
+// PushManager.subscribeにはUint8ArrayのapplicationServerKeyが必要なため、
+// base64url形式のVAPID公開鍵を変換する。
+function urlBase64ToUint8Array(base64Url: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = (base64Url + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
 interface CategoryDTO {
@@ -41,6 +52,7 @@ interface OrderDTO {
   items: OrderItemDTO[];
   total: number;
   rating: number | null;
+  queue?: { aheadCount: number; estimatedMinutes: number };
 }
 
 const STORAGE_KEY = "hotsand-order-ids";
@@ -87,9 +99,58 @@ export function NumberOrderClient({
   const [showCart, setShowCart] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [restoring, setRestoring] = useState(true);
+  const [showAllergenFilter, setShowAllergenFilter] = useState(false);
+  const [excludedAllergens, setExcludedAllergens] = useState<string[]>([]);
+  const [pushEnabledOrderIds, setPushEnabledOrderIds] = useState<string[]>([]);
+  const [pushStatus, setPushStatus] = useState<"idle" | "requesting" | "denied" | "unsupported">("idle");
 
   const allItems = useMemo(() => new Map(categories.flatMap((c) => c.menuItems.map((i) => [i.id, i] as const))), [categories]);
-  const activeCategory = categories.find((c) => c.id === activeCategoryId) ?? categories[0];
+  const filteredCategories = useMemo(() => {
+    if (excludedAllergens.length === 0) return categories;
+    return categories.map((c) => ({
+      ...c,
+      menuItems: c.menuItems.filter((item) => !allergenCodesOf(item.allergens).some((code) => excludedAllergens.includes(code))),
+    }));
+  }, [categories, excludedAllergens]);
+  const activeCategory = filteredCategories.find((c) => c.id === activeCategoryId) ?? filteredCategories[0];
+
+  function toggleExcludedAllergen(code: string) {
+    setExcludedAllergens((prev) => (prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]));
+  }
+
+  async function enablePushForOrder(orderId: string) {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      setPushStatus("unsupported");
+      return;
+    }
+    const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+    if (!vapidPublicKey) {
+      setPushStatus("unsupported");
+      return;
+    }
+    setPushStatus("requesting");
+    try {
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushStatus("denied");
+        return;
+      }
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) as BufferSource,
+      });
+      await fetch(`/api/orders/${orderId}/push-subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(subscription.toJSON()),
+      });
+      setPushEnabledOrderIds((prev) => [...prev, orderId]);
+      setPushStatus("idle");
+    } catch {
+      setPushStatus("denied");
+    }
+  }
 
   const cartCount = Object.values(cart).reduce((s, q) => s + q, 0);
   const cartTotal = Object.entries(cart).reduce((s, [id, q]) => s + (allItems.get(id)?.price ?? 0) * q, 0);
@@ -230,6 +291,32 @@ export function NumberOrderClient({
           {ORDER_STATUS_LABEL[latestOrder.status] ?? latestOrder.status}
         </span>
 
+        {!TERMINAL_STATUSES.includes(latestOrder.status) && latestOrder.queue && (
+          <p className="mt-2 text-xs text-muted">
+            {latestOrder.queue.aheadCount > 0 ? `あと${latestOrder.queue.aheadCount}件先に並んでいます・` : ""}
+            受け取りまで目安 約{latestOrder.queue.estimatedMinutes}分
+          </p>
+        )}
+
+        {!TERMINAL_STATUSES.includes(latestOrder.status) && !pushEnabledOrderIds.includes(latestOrder.id) && (
+          <div className="mt-3">
+            {pushStatus === "unsupported" || pushStatus === "denied" ? (
+              <p className="text-xs text-muted">
+                {pushStatus === "denied" ? "通知が許可されませんでした。" : "この端末では通知に対応していません。"}
+                画面を開いたままお待ちください。
+              </p>
+            ) : (
+              <button
+                onClick={() => enablePushForOrder(latestOrder.id)}
+                disabled={pushStatus === "requesting"}
+                className="rounded-full border border-border px-4 py-1.5 text-xs font-medium text-foreground disabled:opacity-50"
+              >
+                {pushStatus === "requesting" ? "設定中…" : "🔔 準備ができたら通知を受け取る"}
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="mt-8 w-full max-w-sm rounded-2xl border border-border bg-surface p-4">
           <ul className="space-y-1 text-sm text-foreground">
             {latestOrder.items.map((item) => (
@@ -295,14 +382,36 @@ export function NumberOrderClient({
             </button>
           )}
         </div>
-        {wifiSsid && (
-          <button onClick={() => setShowWifi((v) => !v)} className="mt-2 text-xs text-muted underline underline-offset-4">
-            Wi-Fi: {wifiSsid}
-            {showWifi && wifiPassword ? `（パスワード: ${wifiPassword}）` : ""}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          {wifiSsid && (
+            <button onClick={() => setShowWifi((v) => !v)} className="text-xs text-muted underline underline-offset-4">
+              Wi-Fi: {wifiSsid}
+              {showWifi && wifiPassword ? `（パスワード: ${wifiPassword}）` : ""}
+            </button>
+          )}
+          <button
+            onClick={() => setShowAllergenFilter((v) => !v)}
+            className="text-xs text-muted underline underline-offset-4"
+          >
+            アレルギーで絞り込む{excludedAllergens.length > 0 ? `（${excludedAllergens.length}件除外中）` : ""}
           </button>
+        </div>
+        {showAllergenFilter && (
+          <div className="mt-2 flex flex-wrap gap-2 rounded-xl border border-border bg-surface p-2.5">
+            {ALLERGEN_CODES.map((code) => (
+              <label key={code} className="flex items-center gap-1 text-[11px] text-muted">
+                <input
+                  type="checkbox"
+                  checked={excludedAllergens.includes(code)}
+                  onChange={() => toggleExcludedAllergen(code)}
+                />
+                {ALLERGEN_LABEL[code]}を含まない
+              </label>
+            ))}
+          </div>
         )}
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-          {categories.map((cat) => (
+          {filteredCategories.map((cat) => (
             <button
               key={cat.id}
               onClick={() => setActiveCategoryId(cat.id)}
@@ -316,7 +425,7 @@ export function NumberOrderClient({
         </div>
       </header>
 
-      <RecommendedBanner categories={categories} onQuickAdd={(id) => updateQty(id, 1)} />
+      <RecommendedBanner categories={filteredCategories} onQuickAdd={(id) => updateQty(id, 1)} />
 
       <main className="divide-y divide-border px-4">
         {activeCategory?.menuItems.map((item) => (

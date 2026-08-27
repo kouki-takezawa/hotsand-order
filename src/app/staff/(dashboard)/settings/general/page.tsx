@@ -44,6 +44,16 @@ export default async function GeneralSettingsPage(props: PageProps<"/staff/setti
           <p className="mt-1 text-xs text-muted">どちらも空欄の場合、客側には表示されません。</p>
         </div>
 
+        <label className="flex items-start gap-3 rounded-xl border border-border p-3 has-checked:border-warning has-checked:bg-warning-surface">
+          <input type="checkbox" name="orderingPaused" defaultChecked={settings.orderingPaused} className="mt-1" />
+          <span>
+            <span className="block text-sm font-medium text-foreground">全店舗の注文受付を一時停止する</span>
+            <span className="block text-xs text-muted">
+              チェックすると、共通QR・すべての設置場所のQRからの新規注文を一時的に受け付けなくなります（臨時休業・仕込み切れなど）。
+            </span>
+          </span>
+        </label>
+
         <SubmitButton pendingText="保存中…" className="rounded-full bg-accent px-6 py-2.5 text-sm font-bold text-accent-foreground">
           保存する
         </SubmitButton>

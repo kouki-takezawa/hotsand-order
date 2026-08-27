@@ -38,9 +38,11 @@ model StaffInvite {
 model Settings {
   id             String   @id @default("singleton")
   restaurantName String   @default("ホットサンドスタンド")
-  // 客側の注文画面に表示するWi-Fi案内（任意）。どちらも未設定なら表示しない。
+  // 客側の注文画面に表示するWi-Fi案内(任意)。どちらも未設定なら表示しない。
   wifiSsid       String?
   wifiPassword   String?
+  // 全店舗共通の一時停止フラグ(true の間はどの設置場所・共通QRからも注文不可)。
+  orderingPaused Boolean  @default(false)
   updatedAt      DateTime @updatedAt
 }
 
@@ -72,6 +74,10 @@ model MenuItem {
   // 商品写真のURL（任意）。画像そのものはこのアプリでは保存せず、外部に
   // ホストされた画像のURLを指定してもらう方式。
   imageUrl      String?
+  // 残数管理（任意）。nullなら在庫管理をしない（従来通りisAvailableで手動管理）。
+  // 注文が入るたびに1つずつ減らし、0になったらisAvailableを自動でfalseにする。
+  // 取消された注文分は在庫に戻す。
+  stockCount    Int?
 
   orderItems OrderItem[]
 }
@@ -83,6 +89,8 @@ model Location {
   name      String
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
+  // trueの間、このQRからの注文を停止し、客側には受付停止中の案内を表示する。
+  isPaused  Boolean  @default(false)
 
   orders Order[]
 }
@@ -111,6 +119,9 @@ model Order {
   idempotencyKey String? @unique
   // 提供後に客が任意でつける評価（1〜5）。
   rating    Int?
+  // 客が通知を許可した場合のWeb Push購読情報（endpoint/keys）。この注文の
+  // ステータスが変わった際に一度だけ通知を送るために使う。
+  pushSubscription Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

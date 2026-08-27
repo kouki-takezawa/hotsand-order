@@ -1,7 +1,9 @@
 import "server-only";
 import bcrypt from "bcryptjs";
+import { Prisma } from "@prisma/client";
 import { prisma, isUniqueConstraintError } from "./prisma";
 import { getTodayRangeJST, isLunchHour, getJSTDateKey } from "./date";
+import { sendPushNotification, type PushSubscriptionData } from "./push";
 import type { Order, OrderItem } from "@prisma/client";
 
 export const ACTIVE_STATUSES = ["pending", "preparing", "served"] as const;
@@ -32,6 +34,7 @@ export async function updateSettings(data: {
   restaurantName?: string;
   wifiSsid?: string | null;
   wifiPassword?: string | null;
+  orderingPaused?: boolean;
 }) {
   return prisma.settings.upsert({
     where: { id: "singleton" },
@@ -120,6 +123,7 @@ export async function createMenuItem(input: {
   isRecommended?: boolean;
   allergens?: string;
   imageUrl?: string;
+  stockCount?: number | null;
 }) {
   const max = await prisma.menuItem.aggregate({
     where: { categoryId: input.categoryId },
@@ -143,6 +147,7 @@ export async function updateMenuItem(
     pendingPrice: number | null;
     applyAt: Date | null;
     imageUrl: string | null;
+    stockCount: number | null;
   }>
 ) {
   return prisma.menuItem.update({ where: { id }, data });
@@ -171,6 +176,10 @@ export async function createLocation(name: string) {
 
 export async function renameLocation(id: string, name: string) {
   return prisma.location.update({ where: { id }, data: { name } });
+}
+
+export async function setLocationPaused(id: string, isPaused: boolean) {
+  return prisma.location.update({ where: { id }, data: { isPaused } });
 }
 
 export async function deleteLocation(id: string) {
@@ -223,9 +232,32 @@ export async function createOrder(input: {
     return { menuItemId, name: menuItem.name, price: menuItem.price, quantity };
   });
 
+  // 残数管理（stockCount）している商品だけ、注文と同じトランザクションで
+  // 在庫を減らす。gte条件付きのupdateManyで「注文数以上の在庫が残っている
+  // 場合だけ」減算するため、同時に複数人が最後の1点を注文しても二重に
+  // 売れることはない（countが0なら在庫不足として弾く）。
+  const stockTrackedItems = input.items.filter(({ menuItemId }) => menuItemById.get(menuItemId)?.stockCount != null);
+
   async function createWithIdempotency(data: Parameters<typeof prisma.order.create>[0]["data"]) {
     try {
-      return await prisma.order.create({ data, include: { items: true } });
+      return await prisma.$transaction(async (tx) => {
+        for (const { menuItemId, quantity } of stockTrackedItems) {
+          const result = await tx.menuItem.updateMany({
+            where: { id: menuItemId, stockCount: { gte: quantity } },
+            data: { stockCount: { decrement: quantity } },
+          });
+          if (result.count === 0) {
+            throw new Error(`${menuItemById.get(menuItemId)?.name ?? "商品"}の在庫が不足しています`);
+          }
+        }
+        if (stockTrackedItems.length > 0) {
+          await tx.menuItem.updateMany({
+            where: { id: { in: stockTrackedItems.map((i) => i.menuItemId) }, stockCount: { lte: 0 } },
+            data: { isAvailable: false },
+          });
+        }
+        return tx.order.create({ data, include: { items: true } });
+      });
     } catch (error) {
       // 冪等キーの競合（ほぼ同時に同じキーで2回送信された）なら、先に作られた
       // ほうを読み直して返す。
@@ -260,6 +292,32 @@ export async function getOrderById(id: string) {
   return prisma.order.findUnique({ where: { id }, include: { items: true, location: { select: { name: true } } } });
 }
 
+export async function subscribeOrderPush(orderId: string, subscription: PushSubscriptionData) {
+  await prisma.order.update({
+    where: { id: orderId },
+    data: { pushSubscription: subscription as unknown as Prisma.InputJsonValue },
+  });
+}
+
+// 待ち時間の目安。件数から単純に見積もるだけで、実際の調理能力は加味しない
+// （厳密さより「だいたいの目安」を客に示すことを優先する）。
+const MINUTES_PER_ACTIVE_ORDER = 4;
+
+export async function getQueueInfo(order: { dailyNumber: number; status: string }) {
+  if (order.status !== "pending" && order.status !== "preparing") {
+    return { aheadCount: 0, estimatedMinutes: 0 };
+  }
+  const { start, end } = getTodayRangeJST();
+  const aheadCount = await prisma.order.count({
+    where: {
+      status: { in: ["pending", "preparing"] },
+      dailyNumber: { lt: order.dailyNumber },
+      createdAt: { gte: start, lt: end },
+    },
+  });
+  return { aheadCount, estimatedMinutes: (aheadCount + 1) * MINUTES_PER_ACTIVE_ORDER };
+}
+
 // ---- 店舗側: 注文管理 --------------------------------------------------------
 
 export async function getKitchenOrders() {
@@ -271,11 +329,54 @@ export async function getKitchenOrders() {
   return { orders };
 }
 
+const STATUS_PUSH_MESSAGE: Partial<Record<OrderStatus, string>> = {
+  preparing: "ご注文の調理を始めました",
+  served: "ご注文の準備ができました。お受け取りください",
+  cancelled: "ご注文が取り消されました",
+};
+
 export async function updateOrderStatus(orderId: string, status: OrderStatus, cancelReason?: string) {
-  return prisma.order.update({
+  const before = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      status: true,
+      dailyNumber: true,
+      pushSubscription: true,
+      items: { select: { menuItemId: true, quantity: true } },
+    },
+  });
+
+  const updated = await prisma.order.update({
     where: { id: orderId },
     data: { status, cancelReason: status === "cancelled" ? (cancelReason ?? null) : undefined },
   });
+
+  if (!before || before.status === status) return updated;
+
+  // 取消になった時だけ、残数管理している商品の在庫を戻す（再び注文できるように
+  // isAvailableも戻す）。
+  if (status === "cancelled") {
+    for (const item of before.items) {
+      await prisma.menuItem.updateMany({
+        where: { id: item.menuItemId, stockCount: { not: null } },
+        data: { stockCount: { increment: item.quantity }, isAvailable: true },
+      });
+    }
+  }
+
+  // 客が通知を許可していれば、ステータス変化を知らせる。
+  const message = STATUS_PUSH_MESSAGE[status];
+  if (message && before.pushSubscription) {
+    const { expired } = await sendPushNotification(before.pushSubscription as unknown as PushSubscriptionData, {
+      title: `注文 #${before.dailyNumber}`,
+      body: message,
+    });
+    if (expired) {
+      await prisma.order.update({ where: { id: orderId }, data: { pushSubscription: Prisma.DbNull } }).catch(() => {});
+    }
+  }
+
+  return updated;
 }
 
 export async function rateOrder(orderId: string, rating: number) {

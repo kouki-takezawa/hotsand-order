@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createOrder } from "@/lib/data";
+import { createOrder, getQueueInfo } from "@/lib/data";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 interface CreateOrderBody {
@@ -46,7 +46,8 @@ export async function POST(request: Request) {
       idempotencyKey: body.idempotencyKey,
       locationId: body.locationId,
     });
-    return NextResponse.json({ order }, { status: 201 });
+    const queue = await getQueueInfo(order);
+    return NextResponse.json({ order: { ...order, queue } }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "注文の作成に失敗しました";
     return NextResponse.json({ error: message }, { status: 400 });

@@ -27,7 +27,7 @@ export default async function QrSettingsPage() {
     <div>
       <div className="mb-6 flex items-center justify-between gap-4 print:hidden">
         <p className="text-sm text-muted">
-          各設置場所（提携店舗）専用のQRコードです。印刷してその店舗に掲示してください。読み取ると注文番号が発行され、そのQRからの注文には設置場所が記録されます。設置場所の追加・削除は「設置場所」タブから行えます。
+          各設置場所（提携店舗）専用のQRコードです。印刷してその店舗に掲示してください。読み取ると注文番号が発行され、そのQRからの注文には設置場所が記録されます。設置場所の追加・削除・一時停止は「設置場所」タブから行えます。まとめてPDFで保存したい場合は「印刷する」から印刷ダイアログを開き、出力先で「PDFに保存」を選んでください。
         </p>
         <PrintButton className="shrink-0 rounded-full bg-accent px-5 py-2 text-sm font-bold text-accent-foreground" />
       </div>
@@ -39,6 +39,11 @@ export default async function QrSettingsPage() {
             className="flex flex-col items-center rounded-2xl border border-border bg-surface p-4 print:break-inside-avoid print:border-2 print:border-black print:p-6"
           >
             <p className="mb-2 text-sm font-bold text-foreground print:text-2xl">{location.name}</p>
+            {location.isPaused && (
+              <p className="mb-2 rounded-full border border-warning px-2 py-0.5 text-[11px] font-medium text-warning print:hidden">
+                一時停止中
+              </p>
+            )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={location.qrDataUrl} alt={`${location.name}のQRコード`} className="h-32 w-32 print:h-56 print:w-56" />
             <p className="mt-2 break-all text-center text-[10px] text-muted print:hidden">{location.url}</p>

@@ -11,10 +11,15 @@ import {
   addMenuItemAction,
   updateMenuItemAction,
   deleteMenuItemAction,
+  cancelScheduledPriceAction,
 } from "../actions";
 
 function toDateInputValue(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+function formatScheduledDate(d: Date): string {
+  return new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric" }).format(d);
 }
 
 export default async function MenuSettingsPage(props: PageProps<"/staff/settings/menu">) {
@@ -95,6 +100,30 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                   className="grid grid-cols-1 items-center gap-2 rounded-xl border border-border p-3 sm:grid-cols-[1fr_100px_1fr_auto_auto_auto_auto]"
                 >
                   <input type="hidden" name="id" value={item.id} />
+                  {(item.stockCount != null || (item.pendingPrice != null && item.applyAt)) && (
+                    <div className="col-span-full flex flex-wrap items-center gap-2">
+                      {item.stockCount != null && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            item.stockCount <= 0 ? "border border-warning text-warning" : "bg-background text-muted"
+                          }`}
+                        >
+                          残り{item.stockCount}点
+                        </span>
+                      )}
+                      {item.pendingPrice != null && item.applyAt && (
+                        <span className="inline-flex items-center gap-2 rounded-full bg-background px-2 py-0.5 text-[11px] font-medium text-muted">
+                          📅 {formatScheduledDate(item.applyAt)}から{formatYen(item.pendingPrice)}に変更予定
+                          <button
+                            formAction={cancelScheduledPriceAction}
+                            className="text-warning underline underline-offset-2"
+                          >
+                            取り消す
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <input
                     type="text"
                     name="name"
@@ -145,6 +174,18 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                         {ALLERGEN_LABEL[code]}
                       </label>
                     ))}
+                  </div>
+                  <div className="col-span-full flex flex-wrap items-center gap-2 border-t border-border pt-2">
+                    <span className="text-[11px] text-muted">残数管理:</span>
+                    <input
+                      type="number"
+                      name="stockCount"
+                      min={0}
+                      placeholder="空欄なら無制限"
+                      defaultValue={item.stockCount ?? ""}
+                      className="w-32 rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground"
+                    />
+                    <span className="text-[11px] text-muted">点（注文されるたびに自動で1減り、0で自動的に販売停止）</span>
                   </div>
                   <div className="col-span-full flex flex-wrap items-center gap-2">
                     <span className="text-[11px] text-muted">価格改定を予約:</span>
@@ -226,6 +267,16 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                 placeholder="商品写真のURL（任意）"
                 className="col-span-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground"
               />
+              <div className="col-span-full flex items-center gap-2">
+                <span className="text-[11px] text-muted">残数管理:</span>
+                <input
+                  type="number"
+                  name="stockCount"
+                  min={0}
+                  placeholder="空欄なら無制限"
+                  className="w-32 rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground"
+                />
+              </div>
             </form>
             </div>
           </details>
