@@ -1,5 +1,7 @@
 # Hotsand Order
 
+🔗 **本番URL**: [https://hotsand-order.vercel.app](https://hotsand-order.vercel.app)
+
 QRコードから注文できる、ホットサンド専門店向けの注文・厨房管理システム。Next.js (App Router) + Prisma Postgres + NextAuth (Auth.js) で構築。
 
 [kouki-takezawa/chil-terrace-order](https://github.com/kouki-takezawa/chil-terrace-order) をベースに、ホットサンド店向けに作り直したもの。
